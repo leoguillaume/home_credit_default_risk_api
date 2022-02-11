@@ -5,3 +5,4 @@ joblib==1.1.0
 fastapi==0.73.0
 lightgbm==3.3.2
 scikit-learn==1.0.2
+pyarrow==7.0.0
