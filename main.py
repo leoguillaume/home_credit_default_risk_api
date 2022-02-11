@@ -23,6 +23,21 @@ users_ids = list(data.index)
 X = data.drop(columns='TARGET')
 y = data.TARGET
 
+@app.get('/')
+async def root():
+    response = {
+        "Available endpoints": [
+            "/user/user_list", 
+            "/user/user_data/{user_id}",
+            '/user/user_data/{user_id}/{feature_id}',
+            '/model/feature_list',
+            '/model/feature_name/{feature_id}',
+            '/model/predict/{user_id}'
+            ]
+            }
+    return response
+
+
 @app.get('/user/user_list')
 async def get_user_id_list():
     
