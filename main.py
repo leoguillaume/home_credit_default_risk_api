@@ -1,40 +1,27 @@
 from fastapi import FastAPI
+import shap
 import pandas as pd
 import numpy as np
 import os, joblib
 
 INPUT_PATH = 'inputs'
 
-DATA_NAME = 'data_sample.f'
-FEATURE_DICT_NAME = 'feature_dict.p'
-MODEL_NAME = 'model.p'
-
 app = FastAPI()
 
-feature_dict = joblib.load(os.path.join(INPUT_PATH, FEATURE_DICT_NAME))
-model = joblib.load(os.path.join(INPUT_PATH, MODEL_NAME))
+feature_dict = joblib.load(os.path.join(INPUT_PATH, 'feature_dict.p'))
+model_feature_dict = joblib.load(os.path.join(INPUT_PATH, 'model_feature_dict.p'))
+model = joblib.load(os.path.join(INPUT_PATH, 'model.p'))
+data = pd.read_feather(os.path.join(INPUT_PATH, 'train_sample.f'))
+application = pd.read_feather(os.path.join(INPUT_PATH, 'application.f'))
 
-feature_ids = [int(f.split('_')[1]) for f in feature_dict]
-
-data = pd.read_feather(os.path.join(INPUT_PATH, DATA_NAME))
+application = application.loc[application.SK_ID_CURR.isin(list(data.SK_ID_CURR))]
+users_ids = list(data.SK_ID_CURR)
+application.set_index('SK_ID_CURR', inplace=True)
 data.set_index('SK_ID_CURR', inplace=True)
-users_ids = list(data.index)
-
-X = data.drop(columns='TARGET')
-y = data.TARGET
 
 @app.get('/')
 async def root():
-    response = {
-        "Available endpoints": [
-            "/user/user_list", 
-            "/user/user_data/{user_id}",
-            '/user/user_data/{user_id}/{feature_id}',
-            '/model/feature_list',
-            '/model/feature_name/{feature_id}',
-            '/model/predict/{user_id}'
-            ]
-            }
+    response = 'Welcome back.'
     return response
 
 
@@ -45,49 +32,41 @@ async def get_user_id_list():
 
     return response
 
-@app.get('/user/user_data/{user_id}')
-async def get_user_data(user_id:int):
+@app.get('/model/user_data/{user_id}')
+async def get_model_user_data(user_id:int):
     assert user_id in users_ids, 'This user ID is not available.'
-
-    user_data = X.loc[user_id].fillna('null')
+    
+    user_data = data.loc[user_id].fillna('null')
     user_data = dict(user_data)
 
     response = {'user_id': user_id, 'user_data': user_data}
 
     return response
 
-@app.get('/user/user_data/{user_id}/{feature_id}')
-async def get_user_feature_value(user_id:int, feature_id:str):
+@app.get('/data/feature_list')
+async def get_feature_list():
+
+    response = {'feature_list': feature_dict}
+
+    return response
+
+@app.get('/data/user_data/{user_id}')
+async def get_user_data(user_id:int):
     assert user_id in users_ids, 'This user ID is not available.'
-    assert feature_id in feature_ids, 'This feature ID is not available.'
 
-    response = await  get_user_data(user_id)
-    feature_value = response['user_data']['feature_' + str(feature_id)]
+    user_data = application.loc[user_id].fillna('null').astype(str)
+    user_data = dict(user_data)
 
-    response = {'user_id': user_id, 'feature_id': feature_id, 'feature_value': feature_value}
-
-    return response
-
-@app.get('/model/feature_list')
-async def get_feature_id_list():
-
-    response = {'feature_id_list': feature_ids}
+    response = {'user_id': user_id, 'user_data': user_data}
 
     return response
 
-@app.get('/model/feature_name/{feature_id}')
-async def get_feature_name(feature_id:int):
-
-    response = {'feature_id': feature_id, 'feature_name': feature_dict['feature_' + str(feature_id)]}
-
-    return response
-
-@app.get('/model/feature_data/{feature_id}')
+@app.get('/data/feature_data/{feature_id}')
 async def get_feature_data(feature_id:int):
-    assert feature_id in feature_ids, 'This feature ID is not available.'
+    assert feature_id in feature_dict, 'This feature ID is not available.'
 
-    negative_data = list(X.loc[X.index.isin(y[y == 0].index), 'feature_' + str(feature_id)].fillna('null'))
-    positive_data = list(X.loc[X.index.isin(y[y == 1].index), 'feature_' + str(feature_id)].fillna('null'))
+    negative_data = list(application.loc[application.TARGET == 0, feature_dict[feature_id]['name']].astype(object).fillna('null'))
+    positive_data = list(application.loc[application.TARGET == 1, feature_dict[feature_id]['name']].astype(object).fillna('null'))
 
     response = {'feature_id': feature_id, 'negative_data': negative_data, 'positive_data': positive_data}
     
@@ -97,14 +76,26 @@ async def get_feature_data(feature_id:int):
 async def get_prediction(user_id:int): 
     assert user_id in users_ids, 'This user ID is not available.'
 
-    response = await get_user_data(user_id)
+    response = await get_model_user_data(user_id)
     user_data = pd.Series(response['user_data']).to_frame().T
-    user_data.index = [response['user_id']]
     user_data.replace('null', np.NaN, inplace=True)
-
     prediction = model.predict_proba(user_data)[0]
 
     response = {'user_id': user_id, 'negative_pred': prediction[0], 'positive_pred': prediction[1]}
+
     return response
 
+@app.get('/model/shap_values/{user_id}')
+async def get_shap_values(user_id:int):
+    assert user_id in users_ids, 'This user ID is not available.'
 
+    user_data = data.loc[user_id].fillna('null')
+    user_data.index = [model_feature_dict[i] for i in user_data.index]
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(data)
+    explained_values = list(shap_values[1][np.arange(0, len(data))[data.index == user_id][0], :])
+    expected_value = explainer.expected_value[1]
+
+    response = {'user_id': user_id, 'explained_values': explained_values, 'expected_value': expected_value, 'user_data': dict(user_data)}
+
+    return response
