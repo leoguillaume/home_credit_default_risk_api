@@ -12,7 +12,7 @@ feature_dict = joblib.load(os.path.join(INPUT_PATH, 'feature_dict.p'))
 model_feature_dict = joblib.load(os.path.join(INPUT_PATH, 'model_feature_dict.p'))
 model = joblib.load(os.path.join(INPUT_PATH, 'model.p'))
 data = pd.read_feather(os.path.join(INPUT_PATH, 'train_sample.f'))
-application = pd.read_feather(os.path.join(INPUT_PATH, 'application.f'))
+application = pd.read_feather(os.path.join(INPUT_PATH, 'application_sample.f'))
 
 application = application.loc[application.SK_ID_CURR.isin(list(data.SK_ID_CURR))]
 users_ids = list(data.SK_ID_CURR)
