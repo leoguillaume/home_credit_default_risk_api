@@ -7,3 +7,4 @@ lightgbm==3.3.2
 scikit-learn==1.0.2
 pyarrow==7.0.0
 shap==0.40.0
+pydantic==1.9.0

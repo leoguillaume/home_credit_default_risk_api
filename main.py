@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
 import shap
 import pandas as pd
 import numpy as np
@@ -10,6 +11,7 @@ app = FastAPI()
 
 feature_dict = joblib.load(os.path.join(INPUT_PATH, 'feature_dict.p'))
 model_feature_dict = joblib.load(os.path.join(INPUT_PATH, 'model_feature_dict.p'))
+model_feature_dict_inv = {v:k for k,v in model_feature_dict.items()}
 model = joblib.load(os.path.join(INPUT_PATH, 'model.p'))
 data = pd.read_feather(os.path.join(INPUT_PATH, 'train_sample.f'))
 application = pd.read_feather(os.path.join(INPUT_PATH, 'application_sample.f'))
@@ -18,6 +20,14 @@ application = application.loc[application.SK_ID_CURR.isin(list(data.SK_ID_CURR))
 users_ids = list(data.SK_ID_CURR)
 application.set_index('SK_ID_CURR', inplace=True)
 data.set_index('SK_ID_CURR', inplace=True)
+
+# MODELS
+
+class Credit(BaseModel):
+    amount:float
+    annuity:float
+
+# ENDPOINTS
 
 @app.get('/')
 async def root():
@@ -72,25 +82,40 @@ async def get_feature_data(feature_id:int):
     
     return response
 
-@app.get('/model/predict/{user_id}')
-async def get_prediction(user_id:int): 
+@app.post('/model/predict/{user_id}')
+async def get_prediction(user_id:int, request:Credit): 
     assert user_id in users_ids, 'This user ID is not available.'
 
+    params = request.dict()
+    amount = params.get('amount', 1)
+    annuity = params.get('annuity', 1)
+
     response = await get_model_user_data(user_id)
-    user_data = pd.Series(response['user_data']).to_frame().T
-    user_data.replace('null', np.NaN, inplace=True)
+    user_data = pd.Series(response['user_data']).replace('null', np.NaN)
+
+    user_data.loc[model_feature_dict_inv['AMT_CREDIT']] = user_data[model_feature_dict_inv['AMT_CREDIT']] * amount
+    user_data.loc[model_feature_dict_inv['AMT_ANNUITY']] = user_data[model_feature_dict_inv['AMT_ANNUITY']] * annuity
+
+    user_data = user_data.to_frame().T
     prediction = model.predict_proba(user_data)[0]
 
     response = {'user_id': user_id, 'negative_pred': prediction[0], 'positive_pred': prediction[1]}
 
     return response
 
-@app.get('/model/shap_values/{user_id}')
-async def get_shap_values(user_id:int):
+@app.post('/model/shap_values/{user_id}')
+async def get_shap_values(user_id:int, request:Credit): 
     assert user_id in users_ids, 'This user ID is not available.'
+    
+    params = request.dict()
+    amount = params.get('amount', 1)
+    annuity = params.get('annuity', 1)
 
     user_data = data.loc[user_id].fillna('null')
+    user_data.loc[model_feature_dict_inv['AMT_CREDIT']] = user_data[model_feature_dict_inv['AMT_CREDIT']] * amount
+    user_data.loc[model_feature_dict_inv['AMT_ANNUITY']] = user_data[model_feature_dict_inv['AMT_ANNUITY']] * annuity
     user_data.index = [model_feature_dict[i] for i in user_data.index]
+
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(data)
     explained_values = list(shap_values[1][np.arange(0, len(data))[data.index == user_id][0], :])
